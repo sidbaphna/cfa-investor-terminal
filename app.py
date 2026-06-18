@@ -282,9 +282,9 @@ with st.sidebar:
 # ==========================================================================
 # Tabs
 # ==========================================================================
-tab_track, tab_eq, tab_fi, tab_fsa, tab_pm, tab_grk = st.tabs(
-    ["📡 Tracker", "🧮 Equity Valuation", "🏦 Fixed Income", "🔬 Forensics (FSA)",
-     "📈 Portfolio Risk", "🎲 Greeks"])
+tab_track, tab_news, tab_eq, tab_fi, tab_fsa, tab_pm, tab_grk = st.tabs(
+    ["📡 Tracker", "📰 News & Sectors", "🧮 Equity Valuation", "🏦 Fixed Income",
+     "🔬 Forensics (FSA)", "📈 Portfolio Risk", "🎲 Greeks"])
 
 
 # --------------------------------------------------------------------------
@@ -352,6 +352,80 @@ with tab_track:
             best = df["Expected %"].idxmax()
             payload = df.round(4).to_string()
             deconstruct_button("track", "Analyst-target tracker", best, payload)
+
+
+# --------------------------------------------------------------------------
+# NEWS & SECTORS
+# --------------------------------------------------------------------------
+def _render_news(items, empty_msg: str = "No headlines available right now.") -> None:
+    if not items:
+        st.caption(empty_msg)
+        return
+    for n in items:
+        meta = " · ".join(x for x in [n.publisher, n.published] if x)
+        line = f"- **[{n.title}]({n.url})**"
+        if meta:
+            line += f"  \n  <sub>{meta}</sub>"
+        st.markdown(line, unsafe_allow_html=True)
+
+
+with tab_news:
+    st.subheader("News & Sector Trends")
+    st.caption("Free Yahoo Finance headlines (no API key needed) — links open the "
+               "full article.")
+
+    section = st.radio("Feed", ["📈 Markets", "🇺🇸 U.S. economy", "🌍 World",
+                                "🏭 Sector", "📌 My watchlist"], horizontal=True)
+
+    items: List = []
+    context_label = "the broad market"
+
+    if section == "📈 Markets":
+        items = de.search_news("stock market today earnings movers", 12)
+    elif section == "🇺🇸 U.S. economy":
+        items = de.search_news("US economy Federal Reserve inflation interest rates jobs", 12)
+        context_label = "the U.S. macro economy"
+    elif section == "🌍 World":
+        items = de.search_news("global markets world economy geopolitics commodities", 12)
+        context_label = "global markets"
+    elif section == "🏭 Sector":
+        sector = st.selectbox("Sector", list(de.SECTOR_QUERIES.keys()))
+        etf = de.SECTOR_QUERIES[sector][0]
+        mo = _momentum(etf)
+        if mo:
+            cc = st.columns(4)
+            cc[0].metric(f"{etf} vs 50D", fmt(mo.get("vs_ma50"), pct=True))
+            cc[1].metric(f"{etf} vs 200D", fmt(mo.get("vs_ma200"), pct=True))
+            cc[2].metric("3M return", fmt(mo.get("r3m"), pct=True))
+            cc[3].metric("From 52w high", fmt(mo.get("from_high"), pct=True))
+        items = de.get_sector_news(sector, 12)
+        context_label = f"the {sector} sector"
+    else:  # My watchlist
+        tks = store.all_tickers()
+        if not tks:
+            st.info("Add tickers (sidebar or CSV import) to see their news.")
+        else:
+            pick = st.selectbox("Ticker", tks)
+            items = de.get_ticker_news(pick, 12)
+            context_label = pick
+
+    _render_news(items)
+
+    if items:
+        st.divider()
+        if llm.is_available():
+            if st.button("🧠 How does this affect my investments?", key="news_ai"):
+                heads = "\n".join(f"- {n.title} ({n.publisher})" for n in items)
+                with st.spinner("Analyzing…"):
+                    st.session_state["news_impact"] = llm.news_impact(
+                        heads, ", ".join(store.all_tickers()[:40]),
+                        st.session_state["mode"])
+            if st.session_state.get("news_impact"):
+                with st.expander("🧠 Investment impact", expanded=True):
+                    st.markdown(st.session_state["news_impact"])
+        else:
+            st.caption(f"💡 Reading {context_label}. Add an `ANTHROPIC_API_KEY` for an "
+                       "AI read on how these headlines affect your holdings.")
 
 
 # --------------------------------------------------------------------------

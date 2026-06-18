@@ -10,7 +10,8 @@ and can switch its whole lens between **🎓 CFA Study Mode** and
 
 | Tab | What it does |
 |-----|--------------|
-| 📡 **Tracker** | Your shared image: Last Price vs 1-Yr analyst target, **Expected %** (green/red heatmap), and **Δ Expected %** vs the last saved reading. Optional ATM greeks column. |
+| 📡 **Tracker** | Your shared image: Last Price vs 1-Yr analyst target, **Expected %** (green/red heatmap), **Δ Expected %** vs the last saved reading, and an **As of** quote-time column. Optional ATM greeks. |
+| 📰 **News & Sectors** | Free Yahoo Finance headlines (no key) — Markets / U.S. economy / World / per-**Sector** (with sector-ETF momentum) / per-watchlist-ticker, with article links. Optional AI "how it affects my investments" read when a key is set. |
 | 🧮 **Equity Valuation** | DDM, FCFE, FCFF, and **Residual Income** (single + multistage with persistence ω). Auto-pulls fundamentals; every assumption is editable. |
 | 🏦 **Fixed Income** | Bond price / Macaulay & modified duration / convexity, a yield-shock estimator, spot-curve bootstrapping (arbitrage-free), and a corporate **debt → rate-risk + credit** mapper. |
 | 🔬 **Forensics (FSA)** | **Beneish M-Score** (8-factor manipulation detector), FX translation (current-rate vs temporal + CTA), pension funded status, intercorporate-investment classification. |
@@ -19,7 +20,13 @@ and can switch its whole lens between **🎓 CFA Study Mode** and
 
 Everywhere: a **💡 ELI5 Concept Decoder** (sidebar) and a **🧩 Deconstruct**
 button that explain any term/output in two tiers — a 5-year-old analogy, then
-the exact CFA reality. These use the Anthropic API (the rest works offline).
+the exact CFA reality.
+
+**ELI5 without an API key:** common terms (OAS, Residual Income, Duration, Vega,
+Beneish M-Score, …) are answered instantly from a built-in **offline glossary**
+(`glossary.py`) — no key required, works on the deployed app. With a key, the LLM
+handles *any* term contextually. For free dynamic answers on any term locally,
+point it at a local model (e.g. Ollama) — see below.
 
 ## Install
 

@@ -34,7 +34,7 @@ os.environ["CFA_DATA_FILE"] = _seed_datafile()
 at = AppTest.from_file("app.py", default_timeout=240)
 at.run()
 assert not at.exception, f"OPEN exception: {at.exception}"
-assert len(at.tabs) == 6, f"expected 6 tabs, got {len(at.tabs)}"
+assert len(at.tabs) == 7, f"expected 7 tabs, got {len(at.tabs)}"
 at.radio[0].set_value("💰 Active Investor Mode").run()
 assert not at.exception, f"ACTIVE exception: {at.exception}"
 print(f"✅ Open app — {len(at.tabs)} tabs, both modes, no exceptions")

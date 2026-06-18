@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+import glossary
 from config import LLM_EFFORT, LLM_MODEL, MODE_STUDY
 
 try:
@@ -90,10 +91,25 @@ Keep the whole answer tight. Do not add extra sections or preamble."""
 
 
 def eli5_explain(term: str, context: str = "") -> str:
-    """Decode one term/phrase into the Level 1 / Level 2 structure."""
+    """Decode one term/phrase into the Level 1 / Level 2 structure.
+
+    With an API key → a contextual LLM answer for *any* term. Without one →
+    a curated offline glossary answer (no key needed) for common terms.
+    """
     term = (term or "").strip()
     if not term:
         return "_Type a term to decode (e.g. “Option-Adjusted Spread”)._"
+
+    if not is_available():
+        hit = glossary.lookup(term)
+        if hit:
+            return hit + "\n\n<sub>📖 Offline glossary — no API key needed.</sub>"
+        sample = ", ".join(f"“{t.title()}”" for t in glossary.available_terms()[:6])
+        return ("🔌 **No API key**, and “" + term + "” isn't in the offline "
+                "glossary yet.\n\nOffline terms include: " + sample + ", …\n\n"
+                "For *any* term, set `ANTHROPIC_API_KEY`, or run a free local model "
+                "(see README → ELI5 offline).")
+
     user = f'Term to decode: "{term}"'
     if context.strip():
         user += f"\n\nWhere it appeared on screen (context): {context.strip()}"
@@ -127,6 +143,22 @@ def deep_analysis(topic: str, ticker: str, payload: str,
             f"Here is exactly what the terminal computed/displayed:\n{payload}\n\n"
             "Deconstruct it for me.")
     return _complete(system, user, max_tokens=3500)
+
+
+# --------------------------------------------------------------------------
+# News impact (key-optional — used by the News tab)
+# --------------------------------------------------------------------------
+def news_impact(headlines: str, holdings: str, mode: str = MODE_STUDY) -> str:
+    """Summarize how a batch of headlines may bear on the user's book."""
+    system = ("You are a CFA charterholder and macro strategist. Given recent "
+              "headlines and the user's holdings/watchlist, write 3–6 tight "
+              "bullets on how the news may affect their investments — sector and "
+              "factor exposure, key risks, and what to watch next. End with one "
+              "line of caution. This is analysis, not financial advice.")
+    if mode == MODE_STUDY:
+        system += " Briefly name the macro/finance concepts in play."
+    user = f"Holdings / watchlist: {holdings or '(none specified)'}\n\nHeadlines:\n{headlines}"
+    return _complete(system, user, max_tokens=1400)
 
 
 if __name__ == "__main__":

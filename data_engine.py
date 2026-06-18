@@ -398,8 +398,120 @@ def get_fundamentals(symbol: str) -> Fundamentals:
     )
 
 
+# --------------------------------------------------------------------------
+# News (free, no-key — Yahoo Finance via yfinance)
+# --------------------------------------------------------------------------
+@dataclass
+class NewsItem:
+    title: str
+    publisher: str
+    url: str
+    published: str          # formatted local date/time ("" if unknown)
+    summary: str = ""
+
+
+# GICS-ish sectors → (sector ETF used for headlines, broad search query)
+SECTOR_QUERIES: Dict[str, Tuple[str, str]] = {
+    "Technology": ("XLK", "technology sector stocks"),
+    "Financials": ("XLF", "bank stocks financial sector"),
+    "Health Care": ("XLV", "healthcare pharma sector stocks"),
+    "Energy": ("XLE", "energy oil gas sector stocks"),
+    "Consumer Discretionary": ("XLY", "consumer discretionary retail stocks"),
+    "Consumer Staples": ("XLP", "consumer staples sector stocks"),
+    "Industrials": ("XLI", "industrials sector stocks"),
+    "Utilities": ("XLU", "utilities sector stocks"),
+    "Real Estate": ("XLRE", "real estate REIT sector"),
+    "Materials": ("XLB", "materials sector mining chemicals stocks"),
+    "Communication Services": ("XLC", "communication services media telecom stocks"),
+}
+
+
+def _fmt_news_time(value: Any) -> str:
+    """Format a news timestamp (ISO string or epoch seconds) to local time."""
+    if value in (None, "", 0):
+        return ""
+    try:
+        if isinstance(value, (int, float)):
+            dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
+        else:
+            iso = str(value).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(iso)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError, OverflowError, OSError):
+        return ""
+
+
+def _parse_news_item(raw: Dict[str, Any]) -> NewsItem:
+    """Normalize yfinance's news dict (new nested or legacy flat schema)."""
+    c = raw.get("content", raw) if isinstance(raw, dict) else {}
+    title = (c.get("title") or raw.get("title") or "").strip()
+    summary = (c.get("summary") or c.get("description") or "").strip()
+    prov = c.get("provider") or {}
+    publisher = (prov.get("displayName") if isinstance(prov, dict) else "") \
+        or raw.get("publisher") or ""
+    url = ""
+    for key in ("canonicalUrl", "clickThroughUrl"):
+        u = c.get(key) or {}
+        if isinstance(u, dict) and u.get("url"):
+            url = u["url"]
+            break
+    url = url or raw.get("link") or ""
+    pub = (c.get("pubDate") or c.get("displayTime")
+           or raw.get("providerPublishTime") or "")
+    return NewsItem(title, str(publisher).strip(), url, _fmt_news_time(pub), summary)
+
+
+def _clean_news(raw_list: Any, limit: int) -> List[NewsItem]:
+    items = [_parse_news_item(r) for r in (raw_list or []) if isinstance(r, dict)]
+    seen, out = set(), []
+    for it in items:
+        if it.title and it.url and it.url not in seen:
+            seen.add(it.url)
+            out.append(it)
+    return out[:limit]
+
+
+@ttl_cache(seconds=300)
+def get_ticker_news(symbol: str, limit: int = 8) -> List[NewsItem]:
+    tk = _ticker(symbol)
+    if tk is None:
+        return []
+    try:
+        return _clean_news(tk.news, limit)
+    except Exception:
+        return []
+
+
+@ttl_cache(seconds=300)
+def search_news(query: str, limit: int = 8) -> List[NewsItem]:
+    if yf is None:
+        return []
+    try:
+        return _clean_news(yf.Search(query, news_count=max(limit, 8)).news, limit)
+    except Exception:
+        return []
+
+
+@ttl_cache(seconds=300)
+def get_sector_news(sector: str, limit: int = 8) -> List[NewsItem]:
+    etf, query = SECTOR_QUERIES.get(sector, ("", sector))
+    combined: List[NewsItem] = []
+    if etf:
+        combined += get_ticker_news(etf, limit)
+    combined += search_news(query, limit)
+    seen, out = set(), []
+    for it in combined:
+        if it.url not in seen:
+            seen.add(it.url)
+            out.append(it)
+    return out[:limit]
+
+
 if __name__ == "__main__":  # quick manual check (needs internet)
     q = get_quote_metrics("AAPL")
     print(f"{q.ticker} last={q.last_price} target={q.target_mean} "
           f"expected={q.expected_pct:.2%} beta={q.beta}")
     print("risk-free:", get_risk_free_rate())
+    print("news:", [n.title[:50] for n in get_ticker_news("AAPL", 3)])
