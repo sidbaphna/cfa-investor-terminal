@@ -26,6 +26,7 @@ import data_engine as de
 import llm_orchestrator as llm
 from config import (DEFAULT_BENCHMARK, DEFAULT_DISCOUNT_RATE, LLM_MODEL,
                     MODE_ACTIVE, MODE_STUDY)
+from importers import tickers_from_csv
 from storage import PortfolioStore
 from topics import derivatives as dv
 from topics import equity_valuation as ev
@@ -230,6 +231,31 @@ with st.sidebar:
 
     st.divider()
     st.subheader("📋 Watchlist & Holdings")
+    with st.expander("📤 Import watchlist from CSV"):
+        up = st.file_uploader("CSV with a Symbol/Ticker column", type=["csv"],
+                              key="wl_csv")
+        if up is not None:
+            syms: List[str] = []
+            err = None
+            try:
+                syms = tickers_from_csv(up)
+            except Exception as exc:                      # noqa: BLE001
+                err = str(exc)
+            if err:
+                st.error(f"Couldn't read that CSV: {err}")
+            elif syms:
+                preview = ", ".join(syms[:8]) + (" …" if len(syms) > 8 else "")
+                st.caption(f"Found {len(syms)} tickers: {preview}")
+                if st.button(f"➕ Add {len(syms)} to watchlist", key="wl_csv_btn",
+                             width="stretch"):
+                    existing = {w.ticker for w in store.list_watchlist()}
+                    for s in syms:
+                        store.add_watch(s)               # upsert; no strike
+                    added = sum(1 for s in syms if s not in existing)
+                    st.success(f"Added {added} new · {len(syms) - added} already there.")
+                    st.rerun()
+            else:
+                st.warning("No tickers found — need a 'Symbol' or 'Ticker' column.")
     with st.expander("➕ Add to watchlist"):
         wt = st.text_input("Ticker", key="wt_add").strip().upper()
         wstrike = st.number_input("Target strike (your thesis price)",
