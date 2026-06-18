@@ -8,3 +8,5 @@ numpy>=1.24              # numerics
 scipy>=1.10              # Black-Scholes greeks (norm), regressions
 plotly>=5.18             # interactive charts
 anthropic>=0.40          # LLM orchestrator (ELI5 + Deep Analysis). Optional at runtime.
+SQLAlchemy>=2.0          # durable persistence backend (Postgres/SQLite) for deploy
+psycopg2-binary>=2.9     # Postgres driver — needed when CFA_DB_URL points at Postgres

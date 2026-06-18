@@ -56,7 +56,7 @@ cp portfolio_data.example.json portfolio_data.json   # APP, FICO, ORCL, SMCI
 
 ```
 config.py            shared constants (model id, benchmark, rates)
-storage.py           JSON CRUD: holdings, watchlist, snapshots (Δ Expected %)
+storage.py           pluggable persistence (local JSON OR SQL/Postgres): holdings, watchlist, snapshots
 data_engine.py       yfinance harvester: quotes, statements, prices, options, fundamentals
 topics/
   equity_valuation.py   DDM / FCFE / FCFF / Residual Income
@@ -71,6 +71,34 @@ app.py               Streamlit UI (tabs, sidebar, mode toggle)
 `topics/*` and `data_engine.py` never import Streamlit, so each engine is
 reusable and unit-testable on its own. To add a CFA topic, drop a new module in
 `topics/` and add a tab in `app.py` — nothing else needs to change.
+
+## Deploy for remote / phone access (Streamlit Community Cloud)
+
+1. Push to GitHub, then sign in at **https://share.streamlit.io** with GitHub.
+2. **Create app** → your repo, branch `main`, **Main file path = `app.py`**
+   (not the default `streamlit_app.py`), then Deploy.
+3. In the app's **Settings → Secrets**, paste (TOML):
+
+   ```toml
+   CFA_APP_PASSWORD = "choose-a-strong-password"   # turns on the login gate
+   CFA_DB_URL = "postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME"  # durable storage
+   ANTHROPIC_API_KEY = "sk-ant-..."                 # optional: ELI5 / Deconstruct
+   ```
+
+**Login gate** — set `CFA_APP_PASSWORD` and the app shows a password prompt before
+anything else (good for a public URL you open from your phone). Unset = open.
+
+**Durable storage (`CFA_DB_URL`)** — Streamlit Cloud's filesystem is *ephemeral*:
+a local `portfolio_data.json` is wiped on every restart/redeploy. Point
+`CFA_DB_URL` at a **free hosted Postgres** so your watchlist/holdings survive:
+
+- **Neon** (https://neon.tech) or **Supabase** (https://supabase.com) → create a
+  free project → copy the connection string → ensure the scheme is
+  `postgresql+psycopg2://…`. The app auto-creates its single table on first run.
+
+The store auto-selects: `CFA_DB_URL` set → SQL backend; otherwise the JSON file.
+The active backend is shown in the sidebar ("Storage: …"). Locally you need
+neither — it uses the JSON file with no login.
 
 ## Notes & caveats
 

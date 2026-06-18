@@ -1,4 +1,4 @@
-"""storage.py — Local JSON persistence for portfolios, watchlists, and snapshots.
+"""storage.py — persistence for portfolios, watchlists, and snapshots.
 
 Two "tables" per the spec, plus a snapshot log that powers the tracker's
 "Change in Expected %" column:
@@ -8,11 +8,16 @@ Two "tables" per the spec, plus a snapshot log that powers the tracker's
     snapshots  : {ticker: [{date, price, target, expected_pct}, ...]}
     settings   : misc UI/engine settings (benchmark, discount rate, ...)
 
-Design notes
-------------
-* Pure standard-library; no Streamlit import (keeps the layer reusable/testable).
-* Writes are atomic (temp file + os.replace) so a crash never corrupts state.
-* Every public method has strict type hints and degrades gracefully on bad data.
+Pluggable backends
+------------------
+* JSONFileBackend  — a local file (default). Zero config; great for local dev.
+* SQLBackend       — any SQLAlchemy URL (Postgres/Supabase/Neon, or SQLite).
+                     **Durable** — survives Streamlit Cloud restarts, unlike the
+                     ephemeral container filesystem.
+
+The whole state document is stored as one row (key→JSON), so a single-user app
+gets durability without a schema migration. Pass `db_url=` (or set CFA_DB_URL);
+otherwise it falls back to the JSON file. No Streamlit import — reusable/testable.
 """
 from __future__ import annotations
 
@@ -55,16 +60,128 @@ class WatchItem:
 
 
 # --------------------------------------------------------------------------
+# Backends — each implements load() -> dict|None and save(dict) -> None
+# --------------------------------------------------------------------------
+class JSONFileBackend:
+    """Atomic local-file persistence (temp file + os.replace)."""
+
+    kind = "json"
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+    def describe(self) -> str:
+        return f"local file · {self.path}"
+
+    def load(self) -> Optional[Dict[str, Any]]:
+        if not os.path.exists(self.path):
+            return None
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            return None   # corrupt/unreadable → caller starts clean
+
+    def save(self, data: Dict[str, Any]) -> None:
+        directory = os.path.dirname(os.path.abspath(self.path)) or "."
+        fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2, sort_keys=True)
+            os.replace(tmp, self.path)
+        except OSError:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
+
+
+class SQLBackend:
+    """Durable key→JSON-document store on any SQLAlchemy URL.
+
+    Works with SQLite (sqlite:///path.db) and Postgres
+    (postgresql+psycopg2://user:pass@host:5432/db — e.g. Supabase/Neon).
+    Uses a portable UPDATE-then-INSERT upsert (no dialect-specific ON CONFLICT).
+    """
+
+    kind = "sql"
+
+    def __init__(self, db_url: str, key: str = "default") -> None:
+        try:
+            from sqlalchemy import create_engine, text
+        except Exception as exc:  # pragma: no cover
+            raise RuntimeError(
+                "CFA_DB_URL is set but SQLAlchemy isn't installed. "
+                "Run `pip install sqlalchemy psycopg2-binary`."
+            ) from exc
+        self._text = text
+        self.key = key
+        self._url = db_url
+        self.engine = create_engine(db_url, pool_pre_ping=True)
+        with self.engine.begin() as conn:
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS portfolio_store "
+                "(id TEXT PRIMARY KEY, doc TEXT NOT NULL)"))
+
+    def describe(self) -> str:
+        scheme = self._url.split("://", 1)[0]
+        return f"database · {scheme}"
+
+    def load(self) -> Optional[Dict[str, Any]]:
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                self._text("SELECT doc FROM portfolio_store WHERE id = :id"),
+                {"id": self.key}).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def save(self, data: Dict[str, Any]) -> None:
+        doc = json.dumps(data, sort_keys=True)
+        with self.engine.begin() as conn:
+            res = conn.execute(
+                self._text("UPDATE portfolio_store SET doc = :doc WHERE id = :id"),
+                {"doc": doc, "id": self.key})
+            if res.rowcount == 0:
+                conn.execute(
+                    self._text("INSERT INTO portfolio_store (id, doc) "
+                               "VALUES (:id, :doc)"),
+                    {"id": self.key, "doc": doc})
+
+
+# --------------------------------------------------------------------------
 # Store
 # --------------------------------------------------------------------------
 class PortfolioStore:
-    """CRUD wrapper over a single JSON file. Instantiate once, reuse."""
+    """CRUD wrapper over a pluggable backend. Instantiate once, reuse.
 
-    def __init__(self, path: str = DATA_FILE) -> None:
+    db_url: a SQLAlchemy URL for durable storage. If omitted, falls back to
+            CFA_DB_URL env var, then to the local JSON file at `path`.
+    """
+
+    def __init__(self, path: str = DATA_FILE, db_url: Optional[str] = None) -> None:
         self.path = path
-        self._data: Dict[str, Any] = self._load()
+        db_url = db_url or os.environ.get("CFA_DB_URL")
+        if db_url:
+            self._backend: Any = SQLBackend(db_url)
+        else:
+            self._backend = JSONFileBackend(path)
+        self.backend_kind = self._backend.kind
 
-    # ---- low-level I/O ---------------------------------------------------
+        raw = self._backend.load()
+        if raw is None:
+            self._data = self._empty()
+            if self.backend_kind == "sql":
+                self.save()   # seed the row so the doc exists
+        else:
+            self._data = self._merge_defaults(raw)
+
+    def backend_description(self) -> str:
+        return self._backend.describe()
+
+    # ---- shape helpers ---------------------------------------------------
     def _empty(self) -> Dict[str, Any]:
         return {
             "holdings": [],
@@ -76,35 +193,16 @@ class PortfolioStore:
             },
         }
 
-    def _load(self) -> Dict[str, Any]:
-        if not os.path.exists(self.path):
-            return self._empty()
-        try:
-            with open(self.path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (json.JSONDecodeError, OSError):
-            # Corrupt or unreadable file: start clean rather than crash the app.
-            return self._empty()
-        # Backfill any missing top-level keys (forward/backward compatibility).
+    def _merge_defaults(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Backfill any missing top-level keys (forward/backward compatibility)."""
         base = self._empty()
-        base.update({k: v for k, v in data.items() if k in base})
         for k in base:
             if k not in data:
                 data[k] = base[k]
         return data
 
     def save(self) -> None:
-        """Atomic write: never leaves a half-written file behind."""
-        directory = os.path.dirname(os.path.abspath(self.path)) or "."
-        fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(self._data, fh, indent=2, sort_keys=True)
-            os.replace(tmp, self.path)
-        except OSError:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-            raise
+        self._backend.save(self._data)
 
     # ---- Holdings CRUD ---------------------------------------------------
     def list_holdings(self) -> List[Holding]:
@@ -211,12 +309,18 @@ class PortfolioStore:
         self.save()
 
 
-if __name__ == "__main__":  # tiny smoke test
+if __name__ == "__main__":  # tiny smoke test (JSON + SQLite backends)
     store = PortfolioStore("portfolio_data.demo.json")
     store.add_holding("AAPL", 150.0, 10)
     store.add_watch("FICO", target_strike=1600.0)
     store.record_snapshot("FICO", 1261.17, 1531.52, 0.214)
-    print("Holdings :", store.list_holdings())
-    print("Watchlist:", store.list_watchlist())
-    print("Tickers  :", store.all_tickers())
+    print("JSON backend :", store.backend_description())
+    print("Holdings     :", store.list_holdings())
     os.remove("portfolio_data.demo.json")
+
+    sql = PortfolioStore(db_url="sqlite:///portfolio_demo.db")
+    sql.add_watch("NVDA", target_strike=250.0)
+    reloaded = PortfolioStore(db_url="sqlite:///portfolio_demo.db")
+    print("SQL backend  :", reloaded.backend_description())
+    print("Persisted    :", [w.ticker for w in reloaded.list_watchlist()])
+    os.remove("portfolio_demo.db")

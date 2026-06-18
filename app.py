@@ -14,6 +14,7 @@ Run:  streamlit run app.py
 """
 from __future__ import annotations
 
+import os
 from datetime import date, datetime
 from typing import Dict, List
 
@@ -34,6 +35,41 @@ from topics import portfolio_mgmt as pm
 
 st.set_page_config(page_title="CFA Investor Terminal", page_icon="📊",
                    layout="wide")
+
+
+# ==========================================================================
+# Config + login gate (for remote/phone access)
+# ==========================================================================
+def _conf(name: str, default=None):
+    """Read a setting from Streamlit secrets first, then the environment."""
+    try:
+        if name in st.secrets:
+            return st.secrets[name]
+    except Exception:
+        pass
+    return os.environ.get(name, default)
+
+
+def _require_login() -> None:
+    """Single-password gate. If no password is configured, the app is open
+    (convenient for local dev). Set CFA_APP_PASSWORD (env or Streamlit secret)
+    to protect the deployed app."""
+    password = _conf("CFA_APP_PASSWORD")
+    if not password or st.session_state.get("authed"):
+        return
+    st.title("🔒 CFA Investor Terminal")
+    st.caption("Enter the access password to continue.")
+    pw = st.text_input("Password", type="password", key="login_pw")
+    if st.button("Enter", key="login_btn"):
+        if pw == str(password):
+            st.session_state["authed"] = True
+            st.rerun()
+        else:
+            st.error("Incorrect password.")
+    st.stop()
+
+
+_require_login()
 
 
 # ==========================================================================
@@ -68,11 +104,11 @@ def c_riskfree() -> float:
 # Session / store
 # ==========================================================================
 @st.cache_resource
-def get_store() -> PortfolioStore:
-    return PortfolioStore()
+def get_store(db_url: str = "") -> PortfolioStore:
+    return PortfolioStore(db_url=db_url or None)
 
 
-store = get_store()
+store = get_store(_conf("CFA_DB_URL", "") or "")
 st.session_state.setdefault("mode", MODE_STUDY)
 
 
@@ -190,6 +226,7 @@ with st.sidebar:
                f"{fmt(c_riskfree(), pct=True)}")
     st.caption(f"Last manual refresh: {st.session_state.get('last_refresh', '—')} "
                "· auto-expires ~3 min")
+    st.caption(f"Storage: {store.backend_description()}")
 
     st.divider()
     st.subheader("📋 Watchlist & Holdings")
