@@ -1,0 +1,17 @@
+{
+  "holdings": [
+    {"ticker": "ORCL", "cost_basis": 180.0, "size": 25, "date_added": "2026-01-15"},
+    {"ticker": "FICO", "cost_basis": 1100.0, "size": 3, "date_added": "2026-02-01"}
+  ],
+  "watchlist": [
+    {"ticker": "APP", "date_added": "2026-06-18", "target_strike": 700.0},
+    {"ticker": "FICO", "date_added": "2026-06-18", "target_strike": 1600.0},
+    {"ticker": "ORCL", "date_added": "2026-06-18", "target_strike": 250.0},
+    {"ticker": "SMCI", "date_added": "2026-06-18", "target_strike": 40.0}
+  ],
+  "snapshots": {},
+  "settings": {
+    "benchmark": "SPY",
+    "discount_rate": 0.09
+  }
+}

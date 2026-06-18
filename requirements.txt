@@ -1,0 +1,10 @@
+# The Universal CFA Investor Terminal — dependencies
+# Python 3.9+ (tested on system Python 3.9.6; 3.11+ recommended)
+
+streamlit>=1.33          # dashboard UI
+yfinance>=0.2.40         # market data, statements, option chains, analyst targets
+pandas>=2.1              # dataframes; Styler.map (tracker heatmap) needs >=2.1
+numpy>=1.24              # numerics
+scipy>=1.10              # Black-Scholes greeks (norm), regressions
+plotly>=5.18             # interactive charts
+anthropic>=0.40          # LLM orchestrator (ELI5 + Deep Analysis). Optional at runtime.
