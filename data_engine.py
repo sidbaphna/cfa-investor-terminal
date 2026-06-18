@@ -15,8 +15,14 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover
+    ZoneInfo = None  # type: ignore
 
 import numpy as np
 import pandas as pd
@@ -82,6 +88,8 @@ class QuoteMetrics:
     name: str = ""
     sector: str = ""
     currency: str = "USD"
+    quote_epoch: float = float("nan")     # last quote update (epoch seconds)
+    exchange_tz: str = ""                  # IANA tz, e.g. "America/New_York"
 
     @property
     def expected_pct(self) -> float:
@@ -90,6 +98,25 @@ class QuoteMetrics:
                 or self.last_price <= 0:
             return float("nan")
         return self.target_mean / self.last_price - 1.0
+
+    @property
+    def as_of(self) -> str:
+        """Date/time of the last price update, in the exchange's local zone.
+        Yahoo quotes are delayed, so this is the 'as of' stamp, not real-time."""
+        if not np.isfinite(self.quote_epoch) or self.quote_epoch <= 0:
+            return ""
+        try:
+            dt = datetime.fromtimestamp(self.quote_epoch, tz=timezone.utc)
+            if self.exchange_tz and ZoneInfo is not None:
+                try:
+                    dt = dt.astimezone(ZoneInfo(self.exchange_tz))
+                except Exception:
+                    dt = dt.astimezone()
+            else:
+                dt = dt.astimezone()
+            return dt.strftime("%Y-%m-%d %H:%M %Z")
+        except Exception:
+            return ""
 
 
 def _ticker(symbol: str):  # -> yf.Ticker | None
@@ -147,6 +174,10 @@ def get_quote_metrics(symbol: str) -> QuoteMetrics:
         name=str(info.get("shortName") or info.get("longName") or symbol).strip(),
         sector=str(info.get("sector") or "").strip(),
         currency=str(info.get("currency") or "USD").strip(),
+        quote_epoch=_safe(info, "regularMarketTime",
+                          _safe(info, "postMarketTime",
+                                _safe(info, "preMarketTime"))),
+        exchange_tz=str(info.get("exchangeTimezoneName") or "").strip(),
     )
 
 

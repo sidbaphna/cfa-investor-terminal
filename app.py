@@ -256,6 +256,7 @@ with tab_track:
                 "Ticker": t,
                 "Last Price": q.last_price,
                 "1 Yr Target Est": q.target_mean,
+                "As of": q.as_of,
                 "Expected %": exp,
                 "Δ Expected %": delta,
                 "Beta": q.beta,
@@ -279,8 +280,9 @@ with tab_track:
                            **({"ATM Δ": "{:.2f}", "IV": "{:.1%}"} if show_greeks else {})},
                           na_rep="—"))
         st.dataframe(styler, width="stretch")
-        st.caption("Expected % = (Target / Price) − 1. Δ Expected % compares to "
-                   "the last saved reading (snapshots persist in portfolio_data.json).")
+        st.caption("Expected % = (Target / Price) − 1. ‘As of’ is each quote’s last "
+                   "Yahoo update (delayed) in the exchange’s local time. Δ Expected % "
+                   "compares to the last saved reading.")
 
         # Mode lens
         if not df.empty:
