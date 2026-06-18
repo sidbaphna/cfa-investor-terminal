@@ -13,6 +13,7 @@ Resilience contract
 """
 from __future__ import annotations
 
+import io
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ except Exception:  # pragma: no cover
 
 import numpy as np
 import pandas as pd
+import requests
 
 try:
     import yfinance as yf
@@ -509,9 +511,186 @@ def get_sector_news(sector: str, limit: int = 8) -> List[NewsItem]:
     return out[:limit]
 
 
+def _num(v: Any, default: float = float("nan")) -> float:
+    try:
+        f = float(v)
+        return f if np.isfinite(f) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _date_str(v: Any) -> str:
+    """Format a date/datetime/epoch into YYYY-MM-DD ('' if unusable)."""
+    if v in (None, "", 0):
+        return ""
+    try:
+        if isinstance(v, (int, float)):
+            return datetime.fromtimestamp(float(v), tz=timezone.utc).astimezone().strftime("%Y-%m-%d")
+        return str(v)[:10]
+    except (ValueError, TypeError, OverflowError, OSError):
+        return ""
+
+
+# --------------------------------------------------------------------------
+# Comparables (peer comparison)
+# --------------------------------------------------------------------------
+@dataclass
+class CompMetrics:
+    ticker: str
+    name: str = ""
+    price: float = float("nan")
+    market_cap: float = float("nan")
+    trailing_pe: float = float("nan")
+    forward_pe: float = float("nan")
+    price_to_book: float = float("nan")
+    ev_to_ebitda: float = float("nan")
+    gross_margin: float = float("nan")
+    operating_margin: float = float("nan")
+    profit_margin: float = float("nan")
+    revenue_growth: float = float("nan")
+    earnings_growth: float = float("nan")
+    dividend_yield: float = float("nan")
+    beta: float = float("nan")
+
+
+@ttl_cache(seconds=300)
+def get_comp_metrics(symbol: str) -> CompMetrics:
+    info = _info(symbol)
+    if not info:
+        return CompMetrics(symbol.strip().upper())
+    price = _safe(info, "currentPrice", _safe(info, "regularMarketPrice"))
+    return CompMetrics(
+        ticker=symbol.strip().upper(),
+        name=str(info.get("shortName") or symbol).strip(),
+        price=price,
+        market_cap=_safe(info, "marketCap"),
+        trailing_pe=_safe(info, "trailingPE"),
+        forward_pe=_safe(info, "forwardPE"),
+        price_to_book=_safe(info, "priceToBook"),
+        ev_to_ebitda=_safe(info, "enterpriseToEbitda"),
+        gross_margin=_safe(info, "grossMargins"),
+        operating_margin=_safe(info, "operatingMargins"),
+        profit_margin=_safe(info, "profitMargins"),
+        revenue_growth=_safe(info, "revenueGrowth"),
+        earnings_growth=_safe(info, "earningsGrowth"),
+        dividend_yield=_safe(info, "trailingAnnualDividendYield",
+                             _safe(info, "dividendYield")),
+        beta=_safe(info, "beta"),
+    )
+
+
+# --------------------------------------------------------------------------
+# Calendar (earnings + dividend dates)
+# --------------------------------------------------------------------------
+@dataclass
+class CalendarInfo:
+    ticker: str
+    next_earnings: str = ""
+    ex_dividend: str = ""
+    dividend_rate: float = float("nan")
+    dividend_yield: float = float("nan")
+    eps_estimate: float = float("nan")
+
+
+@ttl_cache(seconds=600)
+def get_calendar(symbol: str) -> CalendarInfo:
+    tk = _ticker(symbol)
+    out = CalendarInfo(ticker=symbol.strip().upper())
+    if tk is None:
+        return out
+    try:
+        cal = tk.calendar or {}
+    except Exception:
+        cal = {}
+    if isinstance(cal, dict):
+        ed = cal.get("Earnings Date")
+        if isinstance(ed, (list, tuple)) and ed:
+            out.next_earnings = _date_str(ed[0])
+        elif ed:
+            out.next_earnings = _date_str(ed)
+        out.ex_dividend = _date_str(cal.get("Ex-Dividend Date"))
+        out.eps_estimate = _num(cal.get("Earnings Average"))
+    info = _info(symbol)
+    if not out.next_earnings:
+        out.next_earnings = _date_str(info.get("earningsTimestamp"))
+    if not out.ex_dividend:
+        out.ex_dividend = _date_str(info.get("exDividendDate"))
+    out.dividend_rate = _safe(info, "dividendRate",
+                              _safe(info, "trailingAnnualDividendRate"))
+    out.dividend_yield = _safe(info, "trailingAnnualDividendYield",
+                               _safe(info, "dividendYield"))
+    return out
+
+
+# --------------------------------------------------------------------------
+# Macro snapshot (FRED — free, no API key)
+# --------------------------------------------------------------------------
+@dataclass
+class MacroIndicator:
+    label: str
+    value: float
+    unit: str
+    as_of: str
+    change: float = float("nan")   # vs prior reading (level series only)
+
+
+# (label, FRED series id, unit, compute_year_over_year)
+FRED_SERIES: List[Tuple[str, str, str, bool]] = [
+    ("Fed Funds", "DFF", "%", False),
+    ("2Y Treasury", "DGS2", "%", False),
+    ("10Y Treasury", "DGS10", "%", False),
+    ("Unemployment", "UNRATE", "%", False),
+    ("CPI YoY", "CPIAUCSL", "%", True),
+    ("Core CPI YoY", "CPILFESL", "%", True),
+    ("Real GDP SAAR", "A191RL1Q225SBEA", "%", False),
+]
+
+
+@ttl_cache(seconds=21600)
+def get_fred_series(series_id: str, yoy: bool = False) -> Tuple[float, str, float]:
+    """Return (latest_value, as_of_date, change_vs_prior) from FRED's free CSV.
+    For yoy=True the value is the 12-period % change of the index."""
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+    try:
+        resp = requests.get(url, timeout=12)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text))
+    except Exception:
+        return (float("nan"), "", float("nan"))
+    if df.empty or df.shape[1] < 2:
+        return (float("nan"), "", float("nan"))
+    date_col, val_col = df.columns[0], df.columns[1]
+    df[val_col] = pd.to_numeric(df[val_col], errors="coerce")
+    df = df.dropna(subset=[val_col])
+    if df.empty:
+        return (float("nan"), "", float("nan"))
+    latest = df.iloc[-1]
+    as_of = str(latest[date_col])[:10]
+    if yoy:
+        if len(df) > 12:
+            prior = float(df[val_col].iloc[-13])
+            value = (float(latest[val_col]) / prior - 1) * 100 if prior else float("nan")
+        else:
+            value = float("nan")
+        return (value, as_of, float("nan"))
+    value = float(latest[val_col])
+    change = value - float(df[val_col].iloc[-2]) if len(df) > 1 else float("nan")
+    return (value, as_of, change)
+
+
+@ttl_cache(seconds=21600)
+def get_macro_snapshot() -> List[MacroIndicator]:
+    out: List[MacroIndicator] = []
+    for label, sid, unit, yoy in FRED_SERIES:
+        value, as_of, change = get_fred_series(sid, yoy)
+        out.append(MacroIndicator(label, value, unit, as_of, change))
+    return out
+
+
 if __name__ == "__main__":  # quick manual check (needs internet)
     q = get_quote_metrics("AAPL")
     print(f"{q.ticker} last={q.last_price} target={q.target_mean} "
           f"expected={q.expected_pct:.2%} beta={q.beta}")
     print("risk-free:", get_risk_free_rate())
     print("news:", [n.title[:50] for n in get_ticker_news("AAPL", 3)])
+    print("macro:", [(m.label, round(m.value, 2)) for m in get_macro_snapshot()])

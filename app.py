@@ -33,6 +33,7 @@ from topics import equity_valuation as ev
 from topics import fixed_income as fi
 from topics import fsa
 from topics import portfolio_mgmt as pm
+from topics import research
 
 st.set_page_config(page_title="CFA Investor Terminal", page_icon="📊",
                    layout="wide")
@@ -282,9 +283,9 @@ with st.sidebar:
 # ==========================================================================
 # Tabs
 # ==========================================================================
-tab_track, tab_news, tab_eq, tab_fi, tab_fsa, tab_pm, tab_grk = st.tabs(
-    ["📡 Tracker", "📰 News & Sectors", "🧮 Equity Valuation", "🏦 Fixed Income",
-     "🔬 Forensics (FSA)", "📈 Portfolio Risk", "🎲 Greeks"])
+tab_track, tab_news, tab_research, tab_eq, tab_fi, tab_fsa, tab_pm, tab_grk = st.tabs(
+    ["📡 Tracker", "📰 News & Sectors", "🔭 Research", "🧮 Equity Valuation",
+     "🏦 Fixed Income", "🔬 Forensics (FSA)", "📈 Portfolio Risk", "🎲 Greeks"])
 
 
 # --------------------------------------------------------------------------
@@ -426,6 +427,118 @@ with tab_news:
         else:
             st.caption(f"💡 Reading {context_label}. Add an `ANTHROPIC_API_KEY` for an "
                        "AI read on how these headlines affect your holdings.")
+
+
+# --------------------------------------------------------------------------
+# RESEARCH (financials · peers · calendar & macro)
+# --------------------------------------------------------------------------
+with tab_research:
+    st.subheader("Research")
+    rsec = st.radio("View", ["🧾 Financials", "⚖️ Peer comparison",
+                             "📅 Calendar & Macro"], horizontal=True)
+
+    if rsec == "🧾 Financials":
+        sym = picker("Company", "rfin")
+        if sym:
+            s = c_statements(sym)
+            which = st.selectbox("Statement", ["Income", "Balance Sheet", "Cash Flow"])
+            df = {"Income": s.income, "Balance Sheet": s.balance,
+                  "Cash Flow": s.cashflow}[which]
+            view = st.radio("Show", ["Values", "YoY growth", "Common-size %"],
+                            horizontal=True)
+            if df is None or df.empty:
+                st.warning("No statement data available for this name.")
+            else:
+                if view == "Values":
+                    show = df.copy()
+                    show.columns = [str(c)[:10] for c in show.columns]
+                    st.dataframe(show.style.format("{:,.0f}", na_rep="—"),
+                                 width="stretch")
+                elif view == "YoY growth":
+                    g = research.yoy_growth(df)
+                    st.dataframe(g.style.format("{:+.1%}", na_rep="—")
+                                 .map(_color_expected), width="stretch")
+                else:
+                    cs = research.common_size(df, "Total Revenue", "Total Assets")
+                    if cs.empty:
+                        st.caption("Common-size needs a Total Revenue / Total Assets "
+                                   "base row — not available for this statement.")
+                    else:
+                        st.dataframe(cs.style.format("{:.1%}", na_rep="—"),
+                                     width="stretch")
+                rr = research.key_ratios(s.income, s.balance, s.cashflow)
+                cols = st.columns(len(rr))
+                pct_keys = {"Gross margin", "Operating margin", "Net margin",
+                            "ROA", "ROE"}
+                for (k, v), c in zip(rr.items(), cols):
+                    c.metric(k, fmt(v, pct=k in pct_keys))
+                deconstruct_button("rfin", "Financial Statement Analysis", sym,
+                                   f"{which} statement; key ratios = {rr}")
+
+    elif rsec == "⚖️ Peer comparison":
+        base_sym = picker("Primary ticker", "rpeer")
+        peers_txt = st.text_input("Peers (comma-separated)", value="MSFT, GOOG, AMZN")
+        syms = [base_sym] + [p.strip().upper() for p in peers_txt.split(",") if p.strip()]
+        syms = list(dict.fromkeys([s for s in syms if s]))   # dedupe, keep order
+        if syms:
+            rows = []
+            for s in syms:
+                m = de.get_comp_metrics(s)
+                rows.append({
+                    "Ticker": m.ticker, "Price": m.price, "Mkt Cap": m.market_cap,
+                    "P/E (ttm)": m.trailing_pe, "Fwd P/E": m.forward_pe,
+                    "P/B": m.price_to_book, "EV/EBITDA": m.ev_to_ebitda,
+                    "Gross M": m.gross_margin, "Op M": m.operating_margin,
+                    "Net M": m.profit_margin, "Rev Gr": m.revenue_growth,
+                    "EPS Gr": m.earnings_growth, "Div Yld": m.dividend_yield,
+                    "Beta": m.beta})
+            cdf = pd.DataFrame(rows).set_index("Ticker")
+            st.dataframe(cdf.style.format(
+                {"Price": "{:,.2f}", "Mkt Cap": "{:,.0f}", "P/E (ttm)": "{:.1f}",
+                 "Fwd P/E": "{:.1f}", "P/B": "{:.2f}", "EV/EBITDA": "{:.1f}",
+                 "Gross M": "{:.1%}", "Op M": "{:.1%}", "Net M": "{:.1%}",
+                 "Rev Gr": "{:+.1%}", "EPS Gr": "{:+.1%}", "Div Yld": "{:.2%}",
+                 "Beta": "{:.2f}"}, na_rep="—"), width="stretch")
+            deconstruct_button("rpeer", "Peer / Comparable Analysis", base_sym,
+                               cdf.round(3).to_string())
+
+    else:  # 📅 Calendar & Macro
+        st.markdown("**Earnings & dividend dates**")
+        sym = picker("Company", "rcal")
+        if sym:
+            cal = de.get_calendar(sym)
+            cc = st.columns(4)
+            cc[0].metric("Next earnings", cal.next_earnings or "—")
+            cc[1].metric("Ex-dividend", cal.ex_dividend or "—")
+            cc[2].metric("Dividend rate", fmt(cal.dividend_rate))
+            cc[3].metric("Dividend yield", fmt(cal.dividend_yield, pct=True))
+        if store.all_tickers() and st.button("📋 Load watchlist earnings dates (slow)"):
+            wrows = []
+            for t in store.all_tickers()[:40]:
+                c = de.get_calendar(t)
+                if c.next_earnings:
+                    wrows.append({"Ticker": t, "Next earnings": c.next_earnings,
+                                  "Ex-dividend": c.ex_dividend})
+            if wrows:
+                st.dataframe(pd.DataFrame(wrows).set_index("Ticker")
+                             .sort_values("Next earnings"), width="stretch")
+            else:
+                st.caption("No upcoming dates found for the watchlist.")
+
+        st.divider()
+        st.markdown("**Macro snapshot** — Federal Reserve Economic Data (free)")
+        macro = de.get_macro_snapshot()
+        if macro:
+            mcols = st.columns(len(macro))
+            for ind, c in zip(macro, mcols):
+                vs = f"{ind.value:.2f}{ind.unit}" if np.isfinite(ind.value) else "—"
+                delta = f"{ind.change:+.2f}" if np.isfinite(ind.change) else None
+                c.metric(ind.label, vs, delta)
+            st.caption("Rates/levels in %, CPI shown year-over-year. As-of dates vary "
+                       "by series (daily/monthly/quarterly).")
+            deconstruct_button("rmacro", "Macro Snapshot", "Macro",
+                               "; ".join(f"{i.label}={i.value:.2f}{i.unit}"
+                                         for i in macro if np.isfinite(i.value)))
 
 
 # --------------------------------------------------------------------------

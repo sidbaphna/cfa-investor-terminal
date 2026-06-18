@@ -12,6 +12,7 @@ and can switch its whole lens between **🎓 CFA Study Mode** and
 |-----|--------------|
 | 📡 **Tracker** | Your shared image: Last Price vs 1-Yr analyst target, **Expected %** (green/red heatmap), **Δ Expected %** vs the last saved reading, and an **As of** quote-time column. Optional ATM greeks. |
 | 📰 **News & Sectors** | Free Yahoo Finance headlines (no key) — Markets / U.S. economy / World / per-**Sector** (with sector-ETF momentum) / per-watchlist-ticker, with article links. Optional AI "how it affects my investments" read when a key is set. |
+| 🔭 **Research** | **Financials explorer** (statements with YoY growth, common-size %, key ratios), **peer comparison** (P/E, P/B, EV/EBITDA, margins, growth vs peers), and **Calendar & Macro** (earnings/ex-div dates + a free **FRED** macro snapshot: Fed funds, 2Y/10Y, unemployment, CPI YoY, real GDP). |
 | 🧮 **Equity Valuation** | DDM, FCFE, FCFF, and **Residual Income** (single + multistage with persistence ω). Auto-pulls fundamentals; every assumption is editable. |
 | 🏦 **Fixed Income** | Bond price / Macaulay & modified duration / convexity, a yield-shock estimator, spot-curve bootstrapping (arbitrage-free), and a corporate **debt → rate-risk + credit** mapper. |
 | 🔬 **Forensics (FSA)** | **Beneish M-Score** (8-factor manipulation detector), FX translation (current-rate vs temporal + CTA), pension funded status, intercorporate-investment classification. |
