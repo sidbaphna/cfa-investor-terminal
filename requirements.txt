@@ -7,7 +7,8 @@ pandas>=2.1              # dataframes; Styler.map (tracker heatmap) needs >=2.1
 numpy>=1.24              # numerics
 scipy>=1.10              # Black-Scholes greeks (norm), regressions
 plotly>=5.18             # interactive charts
-anthropic>=0.40          # LLM orchestrator (ELI5 + Deep Analysis). Optional at runtime.
+anthropic>=0.40          # LLM provider (ELI5 + Deep Analysis). Optional at runtime.
+google-genai>=1.0        # free-tier LLM provider (Gemini). Optional at runtime.
 requests>=2.31          # FRED macro CSV fetch (Research tab); also a yfinance dep
 SQLAlchemy>=2.0          # durable persistence backend (Postgres/SQLite) for deploy
 psycopg2-binary>=2.9     # Postgres driver — needed when CFA_DB_URL points at Postgres

@@ -20,7 +20,9 @@ from typing import Dict, List
 
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 import data_engine as de
 import llm_orchestrator as llm
@@ -182,6 +184,10 @@ with top[1]:
 
 MODE = st.session_state["mode"]
 STUDY = MODE == MODE_STUDY
+st.caption("🎓 **Study lens** — formula derivations, IFRS vs US GAAP notes, and "
+           "practice prompts." if STUDY else
+           "💰 **Active lens** — momentum, trailing multiples, margins, and an "
+           "actionable risk read.")
 
 
 # ==========================================================================
@@ -217,7 +223,10 @@ with st.sidebar:
     if bench != store.get_setting("benchmark") or disc != store.get_setting("discount_rate"):
         store.set_setting("benchmark", bench)
         store.set_setting("discount_rate", disc)
-    st.caption(f"LLM: `{LLM_MODEL}` · {'🟢 online' if llm.is_available() else '🔴 offline'}")
+    if llm.is_available():
+        st.caption(f"LLM: `{llm.active_model()}` · 🟢 {llm.provider_name()}")
+    else:
+        st.caption("LLM: 🔴 offline · ELI5 uses the built-in glossary")
 
     if st.button("🔄 Refresh market data", width="stretch"):
         de.clear_caches()          # bust data_engine's internal TTL cache
@@ -435,7 +444,8 @@ with tab_news:
 with tab_research:
     st.subheader("Research")
     rsec = st.radio("View", ["🧾 Financials", "⚖️ Peer comparison",
-                             "📅 Calendar & Macro"], horizontal=True)
+                             "📅 Calendar & Macro", "📈 Technicals"],
+                    horizontal=True, key="research_view")
 
     if rsec == "🧾 Financials":
         sym = picker("Company", "rfin")
@@ -472,6 +482,26 @@ with tab_research:
                             "ROA", "ROE"}
                 for (k, v), c in zip(rr.items(), cols):
                     c.metric(k, fmt(v, pct=k in pct_keys))
+                if STUDY:
+                    with st.expander("📗 IFRS vs US GAAP — statement presentation"):
+                        st.markdown(
+                            "- **Cash flow classification**: under US GAAP interest "
+                            "paid/received and dividends received are operating, "
+                            "dividends paid are financing; **IFRS lets you choose** "
+                            "(operating or investing/financing) — compare CFO carefully.\n"
+                            "- **Income statement**: IFRS allows expenses by *nature* "
+                            "or *function*; US GAAP is by function. No 'extraordinary "
+                            "items' under either today.\n"
+                            "- **Inventory/PP&E**: LIFO (US GAAP only) and IFRS PP&E "
+                            "revaluation make cross-border comparisons non-trivial.")
+                else:
+                    g = research.yoy_growth(df)
+                    rev = g.loc[[i for i in g.index
+                                 if "revenue" in str(i).lower()][:1]] if not g.empty else pd.DataFrame()
+                    if not rev.empty and rev.shape[1] >= 1:
+                        latest_rev = rev.iloc[0, 0]
+                        st.caption(f"📈 Latest revenue YoY: **{fmt(latest_rev, pct=True)}** "
+                                   "— scan the YoY view for margin and cash-flow trend.")
                 deconstruct_button("rfin", "Financial Statement Analysis", sym,
                                    f"{which} statement; key ratios = {rr}")
 
@@ -502,7 +532,7 @@ with tab_research:
             deconstruct_button("rpeer", "Peer / Comparable Analysis", base_sym,
                                cdf.round(3).to_string())
 
-    else:  # 📅 Calendar & Macro
+    elif rsec == "📅 Calendar & Macro":
         st.markdown("**Earnings & dividend dates**")
         sym = picker("Company", "rcal")
         if sym:
@@ -539,6 +569,71 @@ with tab_research:
             deconstruct_button("rmacro", "Macro Snapshot", "Macro",
                                "; ".join(f"{i.label}={i.value:.2f}{i.unit}"
                                          for i in macro if np.isfinite(i.value)))
+
+    else:  # 📈 Technicals
+        sym = picker("Company", "rtech")
+        period = st.selectbox("Window", ["6mo", "1y", "2y", "5y"], index=1,
+                              key="tech_period")
+        overlays = st.multiselect(
+            "Overlays", ["SMA 20", "SMA 50", "SMA 200", "Bollinger (20, 2σ)"],
+            default=["SMA 50", "SMA 200"])
+        px = de.get_prices(sym, period) if sym else pd.DataFrame()
+        if px.empty or "Close" not in px:
+            st.warning("No price history available for this name.")
+        else:
+            close = px["Close"].dropna()
+            fig = make_subplots(rows=4, cols=1, shared_xaxes=True,
+                                vertical_spacing=0.03,
+                                row_heights=[0.52, 0.12, 0.18, 0.18],
+                                subplot_titles=("Price", "Volume", "RSI (14)",
+                                                "MACD (12, 26, 9)"))
+            fig.add_trace(go.Candlestick(
+                x=px.index, open=px["Open"], high=px["High"], low=px["Low"],
+                close=px["Close"], name="Price", showlegend=False), row=1, col=1)
+            for label, win in [("SMA 20", 20), ("SMA 50", 50), ("SMA 200", 200)]:
+                if label in overlays:
+                    fig.add_trace(go.Scatter(x=px.index, y=research.sma(close, win),
+                                  name=label, line=dict(width=1)), row=1, col=1)
+            if "Bollinger (20, 2σ)" in overlays:
+                _mid, _up, _lo = research.bollinger(close, 20, 2.0)
+                fig.add_trace(go.Scatter(x=px.index, y=_up, name="BB upper",
+                              line=dict(width=1, dash="dot")), row=1, col=1)
+                fig.add_trace(go.Scatter(x=px.index, y=_lo, name="BB lower",
+                              line=dict(width=1, dash="dot"), fill="tonexty",
+                              fillcolor="rgba(120,120,160,0.08)"), row=1, col=1)
+            if "Volume" in px:
+                fig.add_trace(go.Bar(x=px.index, y=px["Volume"], name="Vol",
+                              marker_color="rgba(120,140,170,0.5)",
+                              showlegend=False), row=2, col=1)
+            r = research.rsi(close)
+            fig.add_trace(go.Scatter(x=close.index, y=r, name="RSI",
+                          line=dict(width=1), showlegend=False), row=3, col=1)
+            fig.add_hline(y=70, line=dict(width=1, dash="dot", color="#c67967"),
+                          row=3, col=1)
+            fig.add_hline(y=30, line=dict(width=1, dash="dot", color="#7aaa87"),
+                          row=3, col=1)
+            macd_line, signal_line, hist = research.macd(close)
+            fig.add_trace(go.Bar(x=close.index, y=hist, name="Hist",
+                          marker_color="rgba(140,140,170,0.5)", showlegend=False),
+                          row=4, col=1)
+            fig.add_trace(go.Scatter(x=close.index, y=macd_line, name="MACD",
+                          line=dict(width=1)), row=4, col=1)
+            fig.add_trace(go.Scatter(x=close.index, y=signal_line, name="Signal",
+                          line=dict(width=1)), row=4, col=1)
+            fig.update_layout(height=720, margin=dict(l=10, r=10, t=30, b=10),
+                              xaxis_rangeslider_visible=False,
+                              legend=dict(orientation="h", y=1.02, x=0))
+            fig.update_yaxes(range=[0, 100], row=3, col=1)
+            st.plotly_chart(fig, width="stretch")
+            rsi_clean = r.dropna()
+            last_rsi = float(rsi_clean.iloc[-1]) if not rsi_clean.empty else float("nan")
+            tag = ("overbought" if last_rsi >= 70 else
+                   "oversold" if last_rsi <= 30 else "neutral")
+            st.caption(f"Latest RSI {fmt(last_rsi)} ({tag}). Candles use "
+                       "auto-adjusted prices.")
+            deconstruct_button("rtech", "Technical Analysis", sym,
+                               f"period={period}; last RSI={last_rsi:.1f}; "
+                               f"overlays={overlays}")
 
 
 # --------------------------------------------------------------------------
@@ -601,6 +696,17 @@ with tab_eq:
                     with st.expander("📘 Residual Income schedule & formula"):
                         st.latex(r"V_0 = B_0 + \sum_{t=1}^{\infty}\frac{E_t - r\,B_{t-1}}{(1+r)^t}")
                         st.dataframe(pd.DataFrame(ri.schedule), width="stretch")
+                with st.expander("📗 IFRS vs US GAAP — what shifts these inputs"):
+                    st.markdown(
+                        "- **R&D**: US GAAP expenses it; IFRS *capitalizes* qualifying "
+                        "development costs → higher book value/assets, lower current "
+                        "earnings → moves B₀ and ROE in the RI model.\n"
+                        "- **Inventory**: LIFO is allowed under US GAAP, **banned** under "
+                        "IFRS → COGS, margins, and equity differ (watch the LIFO reserve).\n"
+                        "- **PP&E**: IFRS permits upward **revaluation**; US GAAP is "
+                        "historical cost → affects book value and clean surplus.\n"
+                        "- **Clean surplus**: items routed through OCI (FX, some "
+                        "remeasurements) violate Bₜ = Bₜ₋₁ + Eₜ − Dₜ and bias RI.")
             else:
                 mo = _momentum(sym)
                 if mo:
@@ -609,6 +715,12 @@ with tab_eq:
                     m2.metric("vs 200D MA", fmt(mo["vs_ma200"], pct=True))
                     m3.metric("3M return", fmt(mo["r3m"], pct=True))
                     m4.metric("From 52w high", fmt(mo["from_high"], pct=True))
+                cm = de.get_comp_metrics(sym)
+                q1, q2, q3, q4 = st.columns(4)
+                q1.metric("P/E (ttm)", fmt(cm.trailing_pe, dp=1))
+                q2.metric("Fwd P/E", fmt(cm.forward_pe, dp=1))
+                q3.metric("Net margin", fmt(cm.profit_margin, pct=True))
+                q4.metric("EPS growth", fmt(cm.earnings_growth, pct=True))
 
             payload = table.round(3).to_string() + f"\nAssumptions: r={r}, g_high={g_high}, g_term={g_term}, n={n_high}, ω={persistence}"
             deconstruct_button("eq", "Equity Valuation", sym, payload)

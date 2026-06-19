@@ -16,38 +16,83 @@ import os
 from typing import Optional
 
 import glossary
-from config import LLM_EFFORT, LLM_MODEL, MODE_STUDY
+from config import GEMINI_MODEL, LLM_EFFORT, LLM_MODEL, MODE_STUDY
 
 try:
     import anthropic
 except Exception:  # pragma: no cover
     anthropic = None  # type: ignore
 
-_CLIENT = None
+try:
+    from google import genai as google_genai          # google-genai SDK
+    from google.genai import types as google_types
+except Exception:  # pragma: no cover
+    google_genai = None  # type: ignore
+    google_types = None  # type: ignore
+
+_ANTHROPIC_CLIENT = None
+_GEMINI_CLIENT = None
+
+
+def _gemini_key() -> Optional[str]:
+    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+
+
+def _provider() -> str:
+    """Pick the active LLM provider. Anthropic wins if configured, then Gemini."""
+    if anthropic is not None and (os.environ.get("ANTHROPIC_API_KEY")
+                                  or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+        return "anthropic"
+    if google_genai is not None and _gemini_key():
+        return "gemini"
+    return "none"
 
 
 def is_available() -> bool:
-    """True when both the SDK and an API key are present."""
-    if anthropic is None:
-        return False
-    return bool(os.environ.get("ANTHROPIC_API_KEY")
-                or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    """True when some LLM provider (Anthropic or Gemini) is usable."""
+    return _provider() != "none"
 
 
-def _client():
-    global _CLIENT
-    if _CLIENT is None and is_available():
-        _CLIENT = anthropic.Anthropic()
-    return _CLIENT
+def provider_name() -> str:
+    return _provider()
+
+
+def active_model() -> str:
+    p = _provider()
+    if p == "anthropic":
+        return LLM_MODEL
+    if p == "gemini":
+        return GEMINI_MODEL
+    return "offline glossary"
+
+
+def _anthropic_client():
+    global _ANTHROPIC_CLIENT
+    if _ANTHROPIC_CLIENT is None:
+        _ANTHROPIC_CLIENT = anthropic.Anthropic()
+    return _ANTHROPIC_CLIENT
+
+
+def _gemini_client():
+    global _GEMINI_CLIENT
+    if _GEMINI_CLIENT is None:
+        _GEMINI_CLIENT = google_genai.Client(api_key=_gemini_key())
+    return _GEMINI_CLIENT
 
 
 def _complete(system: str, user: str, max_tokens: int = 2000) -> str:
-    """Single-shot completion with graceful degradation."""
-    client = _client()
-    if client is None:
-        return _offline_notice()
+    """Single-shot completion routed to the active provider; degrades gracefully."""
+    provider = _provider()
+    if provider == "anthropic":
+        return _complete_anthropic(system, user, max_tokens)
+    if provider == "gemini":
+        return _complete_gemini(system, user, max_tokens)
+    return _offline_notice()
+
+
+def _complete_anthropic(system: str, user: str, max_tokens: int) -> str:
     try:
-        resp = client.messages.create(
+        resp = _anthropic_client().messages.create(
             model=LLM_MODEL,
             max_tokens=max_tokens,
             thinking={"type": "adaptive"},
@@ -58,15 +103,32 @@ def _complete(system: str, user: str, max_tokens: int = 2000) -> str:
         parts = [b.text for b in resp.content if getattr(b, "type", "") == "text"]
         return "\n".join(parts).strip() or "_(empty response)_"
     except Exception as exc:  # network / auth / quota — never crash the UI
-        return (f"⚠️ LLM call failed: `{type(exc).__name__}: {exc}`\n\n"
+        return (f"⚠️ Anthropic call failed: `{type(exc).__name__}: {exc}`\n\n"
                 "Check your `ANTHROPIC_API_KEY`, model access, and network.")
+
+
+def _complete_gemini(system: str, user: str, max_tokens: int) -> str:
+    try:
+        resp = _gemini_client().models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user,
+            config=google_types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=max_tokens,
+            ),
+        )
+        return (getattr(resp, "text", "") or "").strip() or "_(empty response)_"
+    except Exception as exc:
+        return (f"⚠️ Gemini call failed: `{type(exc).__name__}: {exc}`\n\n"
+                f"Check your `GEMINI_API_KEY` and that `{GEMINI_MODEL}` is available "
+                "(override via `CFA_GEMINI_MODEL`).")
 
 
 def _offline_notice() -> str:
     return (
-        "🔌 **LLM features are offline.** Set `ANTHROPIC_API_KEY` and "
-        "`pip install anthropic` to enable the ELI5 Decoder and Deep Analysis.\n\n"
-        f"Configured model: `{LLM_MODEL}` (override with `CFA_LLM_MODEL`)."
+        "🔌 **LLM features are offline.** Set `ANTHROPIC_API_KEY` *or* a free "
+        "`GEMINI_API_KEY` to enable the ELI5 Decoder, Deconstruct, and news "
+        "impact. (Common terms still work offline via the built-in glossary.)"
     )
 
 

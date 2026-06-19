@@ -24,6 +24,10 @@ TRADING_DAYS: Final[int] = 252
 LLM_MODEL: Final[str] = os.environ.get("CFA_LLM_MODEL", "claude-opus-4-8")
 LLM_EFFORT: Final[str] = os.environ.get("CFA_LLM_EFFORT", "medium")  # low|medium|high|max
 
+# Free-tier alternative: Google Gemini. Used automatically if GEMINI_API_KEY is
+# set and no Anthropic key is present. Override the model with CFA_GEMINI_MODEL.
+GEMINI_MODEL: Final[str] = os.environ.get("CFA_GEMINI_MODEL", "gemini-2.5-flash")
+
 # --- App modes ------------------------------------------------------------
 MODE_STUDY: Final[str] = "🎓 CFA Study Mode"
 MODE_ACTIVE: Final[str] = "💰 Active Investor Mode"

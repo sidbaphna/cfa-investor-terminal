@@ -88,6 +88,44 @@ def key_ratios(income: pd.DataFrame, balance: pd.DataFrame,
     }
 
 
+# --------------------------------------------------------------------------
+# Technical indicators (for the Research → Technicals chart)
+# --------------------------------------------------------------------------
+def sma(series: pd.Series, window: int) -> pd.Series:
+    return series.rolling(window, min_periods=window).mean()
+
+
+def ema(series: pd.Series, span: int) -> pd.Series:
+    return series.ewm(span=span, adjust=False).mean()
+
+
+def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    """Wilder's RSI (EMA-style smoothing with alpha = 1/period)."""
+    delta = series.diff()
+    gain = delta.clip(lower=0.0)
+    loss = (-delta).clip(lower=0.0)
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    out = 100 - 100 / (1 + rs)
+    out[avg_loss == 0] = 100.0     # no losses → RSI 100
+    return out
+
+
+def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
+    """Return (macd_line, signal_line, histogram)."""
+    macd_line = ema(series, fast) - ema(series, slow)
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    return macd_line, signal_line, macd_line - signal_line
+
+
+def bollinger(series: pd.Series, window: int = 20, num_std: float = 2.0):
+    """Return (middle SMA, upper band, lower band)."""
+    mid = sma(series, window)
+    sd = series.rolling(window, min_periods=window).std(ddof=0)
+    return mid, mid + num_std * sd, mid - num_std * sd
+
+
 if __name__ == "__main__":
     cols = ["2025", "2024"]
     inc = pd.DataFrame({cols[0]: [1000, 600, 200, 150], cols[1]: [800, 500, 150, 100]},
@@ -95,3 +133,5 @@ if __name__ == "__main__":
                               "Operating Income", "Net Income"])
     print("YoY:\n", yoy_growth(inc).round(3))
     print("common-size:\n", common_size(inc, "Total Revenue").round(3))
+    up = pd.Series(range(1, 40), dtype=float)
+    print("RSI(uptrend) tail:", round(rsi(up).iloc[-1], 1))   # ~100

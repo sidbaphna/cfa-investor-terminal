@@ -39,6 +39,16 @@ at.radio[0].set_value("💰 Active Investor Mode").run()
 assert not at.exception, f"ACTIVE exception: {at.exception}"
 print(f"✅ Open app — {len(at.tabs)} tabs, both modes, no exceptions")
 
+# Research sub-views — drive the View radio through every option (exercises the
+# peer table, calendar/FRED macro, and the Plotly technicals chart).
+for opt in ["⚖️ Peer comparison", "📅 Calendar & Macro", "📈 Technicals",
+            "🧾 Financials"]:
+    rv = next((r for r in at.radio if r.key == "research_view"), None)
+    assert rv is not None, "research_view radio not found"
+    rv.set_value(opt).run()
+    assert not at.exception, f"Research[{opt}] exception: {at.exception}"
+print("✅ Research views — financials / peers / calendar / technicals, no exceptions")
+
 # 2. Login gate — password set should halt before the tabs -----------------
 os.environ["CFA_APP_PASSWORD"] = "test-secret"
 at2 = AppTest.from_file("app.py", default_timeout=60)

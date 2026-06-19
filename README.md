@@ -12,7 +12,7 @@ and can switch its whole lens between **🎓 CFA Study Mode** and
 |-----|--------------|
 | 📡 **Tracker** | Your shared image: Last Price vs 1-Yr analyst target, **Expected %** (green/red heatmap), **Δ Expected %** vs the last saved reading, and an **As of** quote-time column. Optional ATM greeks. |
 | 📰 **News & Sectors** | Free Yahoo Finance headlines (no key) — Markets / U.S. economy / World / per-**Sector** (with sector-ETF momentum) / per-watchlist-ticker, with article links. Optional AI "how it affects my investments" read when a key is set. |
-| 🔭 **Research** | **Financials explorer** (statements with YoY growth, common-size %, key ratios), **peer comparison** (P/E, P/B, EV/EBITDA, margins, growth vs peers), and **Calendar & Macro** (earnings/ex-div dates + a free **FRED** macro snapshot: Fed funds, 2Y/10Y, unemployment, CPI YoY, real GDP). |
+| 🔭 **Research** | **Financials explorer** (statements with YoY growth, common-size %, key ratios), **peer comparison** (P/E, P/B, EV/EBITDA, margins, growth vs peers), **Calendar & Macro** (earnings/ex-div dates + a free **FRED** macro snapshot), and **Technicals** (candlestick + SMAs / Bollinger / RSI / MACD via Plotly). |
 | 🧮 **Equity Valuation** | DDM, FCFE, FCFF, and **Residual Income** (single + multistage with persistence ω). Auto-pulls fundamentals; every assumption is editable. |
 | 🏦 **Fixed Income** | Bond price / Macaulay & modified duration / convexity, a yield-shock estimator, spot-curve bootstrapping (arbitrage-free), and a corporate **debt → rate-risk + credit** mapper. |
 | 🔬 **Forensics (FSA)** | **Beneish M-Score** (8-factor manipulation detector), FX translation (current-rate vs temporal + CTA), pension funded status, intercorporate-investment classification. |
@@ -23,11 +23,18 @@ Everywhere: a **💡 ELI5 Concept Decoder** (sidebar) and a **🧩 Deconstruct**
 button that explain any term/output in two tiers — a 5-year-old analogy, then
 the exact CFA reality.
 
-**ELI5 without an API key:** common terms (OAS, Residual Income, Duration, Vega,
-Beneish M-Score, …) are answered instantly from a built-in **offline glossary**
-(`glossary.py`) — no key required, works on the deployed app. With a key, the LLM
-handles *any* term contextually. For free dynamic answers on any term locally,
-point it at a local model (e.g. Ollama) — see below.
+**LLM providers (any one, all optional):** the ELI5 Decoder, 🧩 Deconstruct, and
+news-impact features use, in priority order, **Anthropic** (`ANTHROPIC_API_KEY`) →
+**Gemini** (`GEMINI_API_KEY`, free tier) → the built-in **offline glossary**.
+
+- **No key:** common terms (OAS, Residual Income, Duration, Vega, Beneish
+  M-Score, …) are answered instantly from `glossary.py` — works on the deployed app.
+- **Free key (recommended for deploy):** get a free **Gemini** key at
+  [aistudio.google.com](https://aistudio.google.com/apikey) → set `GEMINI_API_KEY`.
+  Works on the cloud app/phone. Override the model with `CFA_GEMINI_MODEL`
+  (default `gemini-2.5-flash`).
+- **Ollama (local only):** a local model also works for any term, but only when
+  you run the app on your own machine — Streamlit Cloud can't reach your laptop.
 
 ## Install
 
@@ -38,9 +45,11 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-For the ELI5 / Deconstruct features, set an Anthropic API key:
+For the ELI5 / Deconstruct features, set EITHER an Anthropic key OR a free Gemini key:
 
 ```bash
+export GEMINI_API_KEY="..."              # free: aistudio.google.com/apikey
+# or, instead:
 export ANTHROPIC_API_KEY="sk-ant-..."
 # optional: trade cost for speed
 export CFA_LLM_MODEL="claude-opus-4-8"   # or claude-sonnet-4-6 / claude-haiku-4-5
@@ -90,7 +99,8 @@ reusable and unit-testable on its own. To add a CFA topic, drop a new module in
    ```toml
    CFA_APP_PASSWORD = "choose-a-strong-password"   # turns on the login gate
    CFA_DB_URL = "postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME"  # durable storage
-   ANTHROPIC_API_KEY = "sk-ant-..."                 # optional: ELI5 / Deconstruct
+   GEMINI_API_KEY = "..."                           # free LLM (aistudio.google.com/apikey)
+   # ANTHROPIC_API_KEY = "sk-ant-..."               # or use Anthropic instead
    ```
 
 **Login gate** — set `CFA_APP_PASSWORD` and the app shows a password prompt before
