@@ -328,11 +328,16 @@ with tab_track:
         st.info("Add tickers in the sidebar to populate your tracker.")
     else:
         rows: List[Dict] = []
+        today_iso = date.today().isoformat()
+        baseline_dates: set = set()
         for t in tickers:
             q = c_quote(t)
             exp = q.expected_pct
             prev = store.previous_expected_pct(t)
             delta = (exp - prev) if (prev is not None and np.isfinite(exp)) else float("nan")
+            prior = [r for r in store.snapshot_history(t) if r.get("date") != today_iso]
+            if prior:
+                baseline_dates.add(prior[-1]["date"])
             if np.isfinite(exp) and np.isfinite(q.last_price) and np.isfinite(q.target_mean):
                 store.record_snapshot(t, q.last_price, q.target_mean, exp)
             row = {
@@ -363,9 +368,17 @@ with tab_track:
                            **({"ATM Δ": "{:.2f}", "IV": "{:.1%}"} if show_greeks else {})},
                           na_rep="—"))
         st.dataframe(styler, width="stretch")
-        st.caption("Expected % = (Target / Price) − 1. ‘As of’ is each quote’s last "
-                   "Yahoo update (delayed) in the exchange’s local time. Δ Expected % "
-                   "compares to the last saved reading.")
+        st.caption("**Expected %** = (1-Yr Target ÷ Last Price) − 1.   "
+                   "**‘As of’** = each quote’s last Yahoo update (delayed), in the "
+                   "exchange’s local time.")
+        if baseline_dates:
+            st.caption(f"**Δ Expected %** = today’s Expected % − the value saved on "
+                       f"**{max(baseline_dates)}** (▲ = expectations rising since then, "
+                       "▼ = falling). Snapshots persist in your portfolio store.")
+        else:
+            st.caption("**Δ Expected %** is blank on the first reading — it compares "
+                       "today’s Expected % to your **previous session’s** saved value, "
+                       "so it populates next time you open the tracker (e.g. tomorrow).")
 
         # Mode lens
         if not df.empty:

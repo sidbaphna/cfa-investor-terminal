@@ -108,20 +108,30 @@ def _complete_anthropic(system: str, user: str, max_tokens: int) -> str:
 
 
 def _complete_gemini(system: str, user: str, max_tokens: int) -> str:
-    try:
-        resp = _gemini_client().models.generate_content(
-            model=GEMINI_MODEL,
-            contents=user,
-            config=google_types.GenerateContentConfig(
-                system_instruction=system,
-                max_output_tokens=max_tokens,
-            ),
-        )
-        return (getattr(resp, "text", "") or "").strip() or "_(empty response)_"
-    except Exception as exc:
-        return (f"⚠️ Gemini call failed: `{type(exc).__name__}: {exc}`\n\n"
+    # gemini-2.5 "flash" is a *thinking* model and thinking tokens count against
+    # max_output_tokens — which silently truncates the visible answer. Disable
+    # thinking for these explainer tasks so the whole budget goes to the response.
+    # Fall back to a plain call if the model rejects thinking_config.
+    last_exc = None
+    for disable_thinking in (True, False):
+        try:
+            cfg = dict(system_instruction=system, max_output_tokens=max_tokens)
+            if disable_thinking:
+                cfg["thinking_config"] = google_types.ThinkingConfig(thinking_budget=0)
+            resp = _gemini_client().models.generate_content(
+                model=GEMINI_MODEL, contents=user,
+                config=google_types.GenerateContentConfig(**cfg))
+            text = (getattr(resp, "text", "") or "").strip()
+            if text:
+                return text
+        except Exception as exc:
+            last_exc = exc
+            continue
+    if last_exc is not None:
+        return (f"⚠️ Gemini call failed: `{type(last_exc).__name__}: {last_exc}`\n\n"
                 f"Check your `GEMINI_API_KEY` and that `{GEMINI_MODEL}` is available "
                 "(override via `CFA_GEMINI_MODEL`).")
+    return "_(empty response)_"
 
 
 def _offline_notice() -> str:
@@ -204,7 +214,7 @@ def deep_analysis(topic: str, ticker: str, payload: str,
     user = (f"Topic area: {topic}\nTicker: {ticker}\n\n"
             f"Here is exactly what the terminal computed/displayed:\n{payload}\n\n"
             "Deconstruct it for me.")
-    return _complete(system, user, max_tokens=3500)
+    return _complete(system, user, max_tokens=4096)
 
 
 # --------------------------------------------------------------------------
