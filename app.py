@@ -54,6 +54,16 @@ def _conf(name: str, default=None):
     return os.environ.get(name, default)
 
 
+# Bridge secrets -> os.environ so the Streamlit-free LLM layer (which reads
+# os.environ) sees keys whether they arrive via .streamlit/secrets.toml,
+# Streamlit Cloud secrets, or a real environment variable.
+for _key in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+             "CFA_GEMINI_MODEL", "CFA_LLM_MODEL", "CFA_DB_URL", "CFA_APP_PASSWORD"):
+    _val = _conf(_key)
+    if _val and not os.environ.get(_key):
+        os.environ[_key] = str(_val)
+
+
 def _require_login() -> None:
     """Single-password gate. If no password is configured, the app is open
     (convenient for local dev). Set CFA_APP_PASSWORD (env or Streamlit secret)
